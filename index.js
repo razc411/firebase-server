@@ -14,7 +14,7 @@ var firebaseHash = require('./lib/firebaseHash');
 var TestableClock = require('./lib/testable-clock');
 var TokenValidator = require('./lib/token-validator');
 var Promise = require('any-promise');
-var firebase = require('firebase');
+var firebase = require('firebase-admin');
 var _log = require('debug')('firebase-server');
 
 // In order to produce new Firebase clients that do not conflict with existing
@@ -109,29 +109,6 @@ FirebaseServer.prototype = {
 			}
 		}
 
-		function authData() {
-			var data;
-			if (authToken) {
-				try {
-					var decodedToken = server._tokenValidator.decode(authToken);
-					if ('d' in decodedToken) {
-						data = decodedToken.d;
-					} else {
-						data = {
-							// 'user_id' is firebase-specific and may be
-							// convenience only; 'sub' is standard JWT.
-							uid: decodedToken.user_id || decodedToken.sub,
-							provider: decodedToken.provider_id,
-							token: decodedToken,
-						};
-					}
-				} catch (e) {
-					authToken = null;
-				}
-			}
-			return data;
-		}
-
 		function pushData(path, data) {
 			send({d: {a: 'd', b: {p: path, d: data}}, t: 'd'});
 		}
@@ -157,30 +134,10 @@ FirebaseServer.prototype = {
 		}
 
 		function tryRead(requestId, path, fbRef) {
-			if (server._ruleset) {
-				return ruleSnapshot(fbRef).then(function (dataSnap) {
-					var result = server._ruleset.tryRead(path, dataSnap, authData());
-					if (!result.allowed) {
-						permissionDenied(requestId);
-						throw new Error('Permission denied for client to read from ' + path + ': ' + result.info);
-					}
-					return true;
-				});
-			}
 			return Promise.resolve(true);
 		}
 
 		function tryWrite(requestId, path, fbRef, newData) {
-			if (server._ruleset) {
-				return ruleSnapshot(fbRef).then(function (dataSnap) {
-					var result = server._ruleset.tryWrite(path, dataSnap, newData, authData());
-					if (!result.allowed) {
-						permissionDenied(requestId);
-						throw new Error('Permission denied for client to write to ' + path + ': ' + result.info);
-					}
-					return true;
-				});
-			}
 			return Promise.resolve(true);
 		}
 
@@ -270,20 +227,6 @@ FirebaseServer.prototype = {
 			}).catch(_log);
 		}
 
-		function handleAuth(requestId, credential) {
-			if (server._authSecret === credential) {
-				return send({t: 'd', d: {r: requestId, b: {s: 'ok', d: TokenValidator.normalize({ auth: null, admin: true, exp: null }) }}});
-			}
-
-			try {
-				var decoded = server._tokenValidator.decode(credential);
-				authToken = credential;
-				return send({t: 'd', d: {r: requestId, b: {s: 'ok', d: TokenValidator.normalize(decoded)}}});
-			} catch (e) {
-				return send({t: 'd', d: {r: requestId, b: {s: 'invalid_token', d: 'Could not parse auth token.'}}});
-			}
-		}
-
 		function accumulateFrames(data){
 			//Accumulate buffer until websocket frame is complete
 			if (typeof ws.frameBuffer == 'undefined'){
@@ -333,10 +276,6 @@ FirebaseServer.prototype = {
 		}.bind(this));
 
 		send({d: {t: 'h', d: {ts: new Date().getTime(), v: '5', h: this.name, s: ''}}, t: 'c'});
-	},
-
-	setRules: function (rules) {
-		this._ruleset = new Ruleset(rules);
 	},
 
 	getData: function (ref) {
